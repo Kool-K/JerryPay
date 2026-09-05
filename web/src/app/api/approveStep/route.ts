@@ -129,6 +129,30 @@ interface NotifyConfig {
   message_template: string;
 }
 
+// JerryPay Agentic Commerce Config Interfaces
+interface AIAgentRecommenderConfig {
+  max_discount_pct?: number;
+  currency?: string;
+  system_prompt?: string;
+  model?: string;
+}
+
+interface PolicyGateConfig {
+  max_discount_pct?: number;
+  max_total_inr?: number;
+  blocked_risk_tags?: string[];
+}
+
+interface RazorpayOrderCreateConfig {
+  currency?: string;
+  receipt_prefix?: string;
+}
+
+interface RecoveryHandlerConfig {
+  notify_channel?: string;
+  fallback_message_template?: string;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Custom Errors
 // ─────────────────────────────────────────────────────────────────────────────
@@ -155,11 +179,13 @@ class ConflictError extends Error {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const env = {
-  adminSecret: (): string => mustEnv("NHOST_ADMIN_SECRET"),
-  graphqlUrl: (): string => mustEnv("NHOST_GRAPHQL_URL"),
-  llmProvider: (): string => process.env.LLM_PROVIDER ?? "gemini",
-  llmApiKey: (): string => mustEnv("LLM_API_KEY"),
+  adminSecret:     (): string => mustEnv("NHOST_ADMIN_SECRET"),
+  graphqlUrl:      (): string => mustEnv("NHOST_GRAPHQL_URL"),
+  llmProvider:     (): string => process.env.LLM_PROVIDER ?? "gemini",
+  llmApiKey:       (): string => mustEnv("LLM_API_KEY"),
   llmDefaultModel: (): string => process.env.LLM_DEFAULT_MODEL ?? "gemini-1.5-flash",
+  razorpayKeyId:   (): string => mustEnv("RAZORPAY_KEY_ID"),
+  razorpayKeySecret: (): string => mustEnv("RAZORPAY_KEY_SECRET"),
   llmBaseUrl: (): string => {
     switch (env.llmProvider()) {
       case "groq":        return process.env.GROQ_API_URL       ?? "https://api.groq.com/openai/v1";
@@ -406,7 +432,7 @@ async function upsertStepRun(
          where: {
            workflow_run_id: { _eq: $workflowRunId },
            step_id: { _eq: $stepId },
-           status: { _in: ["pending", "awaiting_approval", "running"] }
+           status: { _in: ["pending", "awaiting_approval", "waiting_approval", "running"] }
          },
          limit: 1,
          order_by: { started_at: desc }
@@ -624,6 +650,104 @@ async function executeNotify(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// JerryPay: Agentic Commerce Step Executors
+// ─────────────────────────────────────────────────────────────────────────────
+
+async function executeAIAgentRecommender(
+  config: AIAgentRecommenderConfig,
+  context: Record<string, unknown>
+): Promise<{ output: Record<string, unknown>; auditLog: Record<string, unknown> }> {
+  const systemPrompt = config.system_prompt ??
+    `You are JerryPay's Agentic Commerce AI. Analyse the buyer's request and recommend the optimal product bundle.\n\nRULES:\n- Maximum discount: ${config.max_discount_pct ?? 15}%.\n- Currency: ${config.currency ?? "INR"}.\n- Return ONLY valid JSON:\n  {"bundle":[{"product_id":"...","name":"...","price_inr":0,"qty":1}],"recommended_price_inr":0,"discount_pct":0,"reasoning":"..."}`;
+
+  const llmResult = await callLLM({ model: config.model, system_prompt: systemPrompt, user_prompt_template: "{{input}}" }, context);
+
+  let parsed: Record<string, unknown> = {};
+  const rawText = typeof llmResult.text === "string" ? llmResult.text.trim() : "";
+  try {
+    const stripped = rawText.replace(/^```(?:json)?\s*/im, "").replace(/\s*```\s*$/m, "").trim();
+    parsed = JSON.parse(stripped);
+  } catch {
+    const match = rawText.match(/\{[\s\S]*\}/);
+    if (match) {
+      try { parsed = JSON.parse(match[0]); } catch { parsed = { raw_response: rawText }; }
+    } else {
+      parsed = { raw_response: rawText };
+    }
+  }
+
+  const auditLog = {
+    reasoning: parsed.reasoning ?? "",
+    bundle: parsed.bundle ?? [],
+    recommended_price_inr: parsed.recommended_price_inr ?? 0,
+    discount_pct: parsed.discount_pct ?? 0,
+  };
+  return { output: { ...parsed, step_type: "AI_AGENT_RECOMMENDER" }, auditLog };
+}
+
+function executePolicyGate(
+  config: PolicyGateConfig,
+  previousOutput: Record<string, unknown>
+): { verdict: "PASS" | "BREACH"; checks: Array<{ rule: string; value: unknown; limit: unknown; passed: boolean }>; breached_rules: string[] } {
+  const maxDiscountPct = config.max_discount_pct ?? 15;
+  const maxTotalInr = config.max_total_inr ?? 5000;
+  const blockedTags = config.blocked_risk_tags ?? [];
+  const discountPct = Number(previousOutput.discount_pct ?? 0);
+  const totalInr = Number(previousOutput.recommended_price_inr ?? previousOutput.total_inr ?? 0);
+  const riskTags: string[] = Array.isArray(previousOutput.risk_tags) ? (previousOutput.risk_tags as string[]) : [];
+
+  const checks = [
+    { rule: "discount_pct_limit",    value: discountPct, limit: maxDiscountPct, passed: discountPct <= maxDiscountPct },
+    { rule: "order_total_limit_inr", value: totalInr,    limit: maxTotalInr,   passed: totalInr <= maxTotalInr },
+    { rule: "no_blocked_risk_tags",  value: riskTags,    limit: blockedTags,   passed: blockedTags.length === 0 || !riskTags.some((t) => blockedTags.includes(t)) },
+  ];
+  const breached_rules = checks.filter((c) => !c.passed).map((c) => c.rule);
+  return { verdict: breached_rules.length === 0 ? "PASS" : "BREACH", checks, breached_rules };
+}
+
+async function executeRazorpayOrderCreate(
+  config: RazorpayOrderCreateConfig,
+  previousOutput: Record<string, unknown>
+): Promise<{ output: Record<string, unknown>; auditLog: Record<string, unknown> }> {
+  const amountInr = Number(previousOutput.recommended_price_inr ?? previousOutput.total_inr ?? 0);
+  if (amountInr <= 0) {
+    throw new Error(`[RAZORPAY_ORDER_CREATE] Invalid amount: ₹${amountInr}. Previous step must provide recommended_price_inr > 0.`);
+  }
+  const amountPaise = Math.round(amountInr * 100);
+  const currency = config.currency ?? "INR";
+  const receipt = `${config.receipt_prefix ?? "JPAY"}_${Date.now()}`;
+  const credentials = Buffer.from(`${env.razorpayKeyId()}:${env.razorpayKeySecret()}`).toString("base64");
+
+  const res = await fetch("https://api.razorpay.com/v1/orders", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Basic ${credentials}` },
+    body: JSON.stringify({ amount: amountPaise, currency, receipt, notes: { source: "JerryPay Agentic Commerce Gateway" } }),
+  });
+  if (!res.ok) throw new Error(`[RAZORPAY_ORDER_CREATE] Razorpay API ${res.status}: ${await res.text()}`);
+  const order = (await res.json()) as Record<string, unknown>;
+
+  const auditLog = { order_id: order.id, amount_paise: amountPaise, currency, receipt, status: order.status, razorpay_response: order };
+  return {
+    output: { order_id: order.id, amount_paise: amountPaise, amount_inr: amountInr, currency, receipt, status: order.status, step_type: "RAZORPAY_ORDER_CREATE" },
+    auditLog,
+  };
+}
+
+async function executeRecoveryHandler(
+  config: RecoveryHandlerConfig,
+  context: Record<string, unknown>
+): Promise<{ output: Record<string, unknown>; auditLog: Record<string, unknown> }> {
+  const exceptionType = String((context.input as Record<string, unknown>)?.exception_type ?? "UNKNOWN_EXCEPTION");
+  const fallbackMsg = config.fallback_message_template
+    ? resolveTemplate(config.fallback_message_template, context)
+    : `JerryPay: Workflow recovery triggered for exception '${exceptionType}'. Manual review required.`;
+  let notified = false;
+  if (config.notify_channel) { console.info(`[RECOVERY_HANDLER] Notifying via ${config.notify_channel}: ${fallbackMsg}`); notified = true; }
+  const auditLog = { exception_type: exceptionType, handled: true, fallback_action: fallbackMsg, notified };
+  return { output: { recovered: true, exception_type: exceptionType, fallback_action: fallbackMsg, notified, step_type: "RECOVERY_HANDLER" }, auditLog };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Resumed execution engine (runs steps AFTER the approval gate)
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -641,6 +765,9 @@ async function continueWorkflowFromStep(
     return "completed";
   }
 
+  // Carry forward the full gate output as context — this ensures
+  // RAZORPAY_ORDER_CREATE can always read recommended_price_inr from gateOutput
+  // even when it was set by AI_AGENT_RECOMMENDER two steps earlier.
   let previousOutput: Record<string, unknown> = gateOutput;
   const skippedStepOrders = new Set<number>();
 
@@ -670,7 +797,7 @@ async function continueWorkflowFromStep(
 
     try {
       let output: Record<string, unknown>;
-      const context = { output: previousOutput };
+      const context = { input: previousOutput, output: previousOutput };
 
       switch (step.type) {
         case "llm_call":          output = await callLLM(step.config as unknown as LLMCallConfig, context); break;
@@ -689,6 +816,66 @@ async function continueWorkflowFromStep(
           output = { condition_met: conditionMet, branching_to_step: nextStepOrder };
           break;
         }
+
+        // ── JerryPay Agentic Commerce Steps ─────────────────────────────
+        case "AI_AGENT_RECOMMENDER": {
+          const { output: o, auditLog } = await executeAIAgentRecommender(
+            step.config as unknown as AIAgentRecommenderConfig,
+            context
+          );
+          await updateStepRun(stepRunId, "completed", o, null, 1, auditLog);
+          previousOutput = o;
+          console.info(`[run:${workflowRun.id}] Step ${step.step_order} AI_AGENT_RECOMMENDER completed`);
+          continue;
+        }
+
+        case "POLICY_GATE": {
+          const policyConfig = step.config as unknown as PolicyGateConfig;
+          const { verdict, checks, breached_rules } = executePolicyGate(policyConfig, previousOutput);
+          const auditLog = { verdict, checks, breached_rules };
+          // Forward commerce fields so RAZORPAY_ORDER_CREATE can read them
+          const policyOutput: Record<string, unknown> = {
+            verdict,
+            breached_rules,
+            step_type: "POLICY_GATE",
+            recommended_price_inr: previousOutput.recommended_price_inr,
+            discount_pct: previousOutput.discount_pct,
+            bundle: previousOutput.bundle,
+          };
+          if (verdict === "BREACH") {
+            await updateStepRun(stepRunId, "waiting_approval", policyOutput, null, 1, auditLog);
+            await pauseWorkflowRun(workflowRun.id, step.id);
+            console.warn(`[run:${workflowRun.id}] POLICY_GATE BREACH — paused at step ${step.step_order}`);
+            return "paused";
+          }
+          await updateStepRun(stepRunId, "completed", policyOutput, null, 1, auditLog);
+          previousOutput = policyOutput;
+          console.info(`[run:${workflowRun.id}] Step ${step.step_order} POLICY_GATE PASS`);
+          continue;
+        }
+
+        case "RAZORPAY_ORDER_CREATE": {
+          const { output: o, auditLog } = await executeRazorpayOrderCreate(
+            step.config as unknown as RazorpayOrderCreateConfig,
+            previousOutput
+          );
+          await updateStepRun(stepRunId, "completed", o, null, 1, auditLog);
+          previousOutput = o;
+          console.info(`[run:${workflowRun.id}] Step ${step.step_order} RAZORPAY_ORDER_CREATE completed`);
+          continue;
+        }
+
+        case "RECOVERY_HANDLER": {
+          const { output: o, auditLog } = await executeRecoveryHandler(
+            step.config as unknown as RecoveryHandlerConfig,
+            context
+          );
+          await updateStepRun(stepRunId, "completed", o, null, 1, auditLog);
+          previousOutput = o;
+          console.info(`[run:${workflowRun.id}] Step ${step.step_order} RECOVERY_HANDLER completed`);
+          continue;
+        }
+
         default: throw new Error(`Unknown step type: ${step.type}`);
       }
 
@@ -756,11 +943,16 @@ export async function POST(req: NextRequest) {
     const member = await fetchOrgMembership(userId, workflowRun.org_id);
     if (!member) throw new ForbiddenError("You are not a member of this organization");
 
-    // 4. Verify the step_run is awaiting approval
+    // 4. Verify the step_run is awaiting/waiting approval
     const stepRun = await fetchStepRun(stepRunId);
     if (!stepRun) throw new NotFoundError("Step run not found");
-    if (stepRun.status !== "awaiting_approval") {
-      throw new ConflictError(`Step run status is '${stepRun.status}', not 'awaiting_approval'`);
+
+    const isPolicyGatePause = stepRun.status === "waiting_approval";
+    const isApprovalGatePause = stepRun.status === "awaiting_approval";
+    if (!isPolicyGatePause && !isApprovalGatePause) {
+      throw new ConflictError(
+        `Step run status is '${stepRun.status}', expected 'awaiting_approval' or 'waiting_approval'`
+      );
     }
 
     // 5. Load gate step to check required approver_role
@@ -791,10 +983,40 @@ export async function POST(req: NextRequest) {
     // 8. Resume execution after the gate
     await setWorkflowRunRunning(workflowRun.id);
 
+    // For POLICY_GATE breaches, forward the full AI recommender output stored
+    // in the run's earlier step_runs so RAZORPAY_ORDER_CREATE gets the amount.
+    // We merge the gate's own output (contains the verdict) on top of the
+    // recommender output so both are available to subsequent steps.
+    let resumeContext: Record<string, unknown> = stepRun.output ?? {};
+    if (isPolicyGatePause) {
+      // Fetch all completed step_runs for this workflow run to reconstruct context
+      const allStepRunsData = await gql<{
+        step_runs: Array<{ output: Record<string, unknown> | null; workflow_step: { step_order: number; type: string } }>;
+      }>(
+        `query GetAllStepOutputs($runId: uuid!) {
+           step_runs(
+             where: { workflow_run_id: { _eq: $runId }, status: { _eq: "completed" } },
+             order_by: { workflow_step: { step_order: asc } }
+           ) {
+             output
+             workflow_step { step_order type }
+           }
+         }`,
+        { runId: workflowRunId }
+      );
+      // Find the AI_AGENT_RECOMMENDER output
+      const recommenderOutput = allStepRunsData.step_runs
+        .filter((sr) => sr.workflow_step.type === "AI_AGENT_RECOMMENDER")
+        .map((sr) => sr.output ?? {})
+        .pop() ?? {};
+      // Merge: recommender output first, then gate verdict on top
+      resumeContext = { ...recommenderOutput, ...resumeContext };
+    }
+
     const finalStatus = await continueWorkflowFromStep(
       workflowRun,
       gateStep.step_order,
-      stepRun.output ?? {}
+      resumeContext
     );
 
     return NextResponse.json({

@@ -35,7 +35,7 @@ export default async function SettingsPage() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
         <div className="card p-6">
           <h2 className="text-sm font-semibold text-[#A89584] uppercase tracking-wider mb-4">Organization Profile</h2>
-          <SettingsForm orgId={orgId} initialName={org.name} />
+          <SettingsForm key={`${orgId}_${org.name}`} orgId={orgId} initialName={org.name} slug={org.slug} />
         </div>
 
         <div className="card p-6">

@@ -16,14 +16,20 @@ export const ORGS = [
   },
 ] as const;
 
-export type OrgId = (typeof ORGS)[number]["id"];
-export type OrgInfo = (typeof ORGS)[number];
+export type OrgId = (typeof ORGS)[number]["id"] | string;
+export type OrgInfo = {
+  id: string;
+  name: string;
+  letter: string;
+  color: string;
+  slug?: string;
+};
 
 export const DEFAULT_ORG_ID: OrgId = ORGS[0].id;
 
 export function resolveOrgId(raw: string | undefined): OrgId {
   const found = ORGS.find((o) => o.id === raw);
-  return found ? found.id : DEFAULT_ORG_ID;
+  return found ? found.id : (raw || DEFAULT_ORG_ID);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

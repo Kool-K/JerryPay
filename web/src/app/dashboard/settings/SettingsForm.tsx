@@ -1,25 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, Loader2 } from "lucide-react";
+import { useOrg } from "@/contexts/OrgContext";
 
-export default function SettingsForm({ orgId, initialName }: { orgId: string, initialName: string }) {
+export default function SettingsForm({
+  orgId,
+  initialName,
+  slug,
+}: {
+  orgId: string;
+  initialName: string;
+  slug?: string;
+}) {
   const [name, setName] = useState(initialName);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const router = useRouter();
+  const { updateOrgName } = useOrg();
+
+  useEffect(() => {
+    setName(initialName);
+  }, [initialName]);
 
   const handleSave = async () => {
+    if (!name.trim()) return;
     setSaving(true);
     setSaved(false);
     try {
       const res = await fetch("/api/updateOrg", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ org_id: orgId, name }),
+        body: JSON.stringify({ org_id: orgId, name: name.trim() }),
       });
       if (res.ok) {
+        updateOrgName(orgId, name.trim());
         setSaved(true);
         setTimeout(() => setSaved(false), 3000);
         router.refresh();
@@ -44,12 +60,18 @@ export default function SettingsForm({ orgId, initialName }: { orgId: string, in
       </div>
       <div>
         <label className="block text-xs text-[#A89584] mb-1">Support Email</label>
-        <input type="email" className="w-full bg-[#1C1510] border border-[#3A2E24] rounded-lg px-3 py-2 text-sm text-[#FFE5C0] cursor-not-allowed opacity-70" defaultValue="support@acme.com" disabled />
+        <input 
+          type="email" 
+          className="w-full bg-[#1C1510] border border-[#3A2E24] rounded-lg px-3 py-2 text-sm text-[#FFE5C0] cursor-not-allowed opacity-70" 
+          value={`support@${slug || "jerrypay"}.com`} 
+          disabled 
+          readOnly
+        />
       </div>
       <div className="pt-2 flex items-center justify-between">
         <button
           onClick={handleSave}
-          disabled={saving || name === initialName}
+          disabled={saving || !name.trim() || name.trim() === initialName}
           className="bg-[#CD8309] text-[#0E0B08] px-4 py-2 rounded-lg text-sm font-semibold hover:bg-[#FFC97A] transition-colors disabled:opacity-50 flex items-center gap-2"
         >
           {saving && <Loader2 className="w-4 h-4 animate-spin" />}

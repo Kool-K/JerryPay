@@ -134,6 +134,16 @@ export const GET_ORG = `
   }
 `;
 
+export const GET_ALL_ORGS = `
+  query GetAllOrgs {
+    organizations(order_by: { id: asc }) {
+      id
+      name
+      slug
+    }
+  }
+`;
+
 export const GET_ORG_MEMBERS = `
   query GetOrgMembers($orgId: uuid!) {
     org_members(

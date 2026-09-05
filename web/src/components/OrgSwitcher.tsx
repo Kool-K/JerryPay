@@ -2,11 +2,11 @@
 
 import { useState } from "react";
 import { useOrg } from "@/contexts/OrgContext";
-import { ORGS, type OrgId } from "@/lib/orgs";
+import { type OrgId } from "@/lib/orgs";
 import { Check, ChevronUp, ChevronDown } from "lucide-react";
 
 export default function OrgSwitcher({ liveOrgName }: { liveOrgName?: string }) {
-  const { org, orgId, switchOrg } = useOrg();
+  const { org, orgId, orgs, switchOrg } = useOrg();
   const [open, setOpen] = useState(false);
   const displayName = liveOrgName || org.name;
 
@@ -52,7 +52,7 @@ export default function OrgSwitcher({ liveOrgName }: { liveOrgName?: string }) {
           role="listbox"
           aria-label="Switch organization"
         >
-          {ORGS.map((o) => (
+          {orgs.map((o) => (
             <button
               key={o.id}
               role="option"

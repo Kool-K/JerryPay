@@ -119,7 +119,7 @@ export default async function WorkflowDetailPage({
             <Pencil className="w-4 h-4 mr-1.5" /> Edit Workflow
           </Link>
           {/* Trigger Run button — client-side fetch with spinner + redirect */}
-          <TriggerRunButton workflowId={wf.id} orgId={wf.org_id} />
+          <TriggerRunButton workflowId={wf.id} orgId={wf.org_id} steps={wf.workflow_steps.map((s) => s.type)} />
         </div>
       </div>
 

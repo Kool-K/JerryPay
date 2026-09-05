@@ -4,15 +4,38 @@ import { useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Play, Loader2 } from "lucide-react";
 
+const COMMERCE_STEP_TYPES = new Set([
+  "AI_AGENT_RECOMMENDER",
+  "POLICY_GATE",
+  "RAZORPAY_ORDER_CREATE",
+  "RECOVERY_HANDLER",
+]);
+
+const COMMERCE_METADATA = {
+  buyer_request: "Recommend 3 handcrafted home decor items under ₹3000",
+  currency: "INR",
+  channel: "web",
+};
+
+const LEGACY_METADATA = {
+  lead_profile:
+    "Jane Smith, VP of Engineering at TechCorp (500 employees). Budget signal: high. Whitepaper downloaded.",
+};
+
 interface TriggerRunButtonProps {
   workflowId: string;
   orgId: string;
+  /** Step types in the workflow — used to auto-select the right trigger metadata */
+  steps?: string[];
 }
 
-export default function TriggerRunButton({ workflowId, orgId }: TriggerRunButtonProps) {
+export default function TriggerRunButton({ workflowId, orgId, steps = [] }: TriggerRunButtonProps) {
   const router = useRouter();
   const [state, setState] = useState<"idle" | "loading" | "error">("idle");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const isCommerceWorkflow = steps.some((t) => COMMERCE_STEP_TYPES.has(t));
+  const triggerMetadata = isCommerceWorkflow ? COMMERCE_METADATA : LEGACY_METADATA;
 
   const handleTrigger = useCallback(async () => {
     setState("loading");
@@ -25,9 +48,7 @@ export default function TriggerRunButton({ workflowId, orgId }: TriggerRunButton
         body: JSON.stringify({
           workflow_id: workflowId,
           org_id: orgId,
-          metadata: {
-            lead_profile: "Jane Smith, VP of Engineering at TechCorp (500 employees). Budget signal: high. Whitepaper downloaded."
-          }
+          metadata: triggerMetadata,
         }),
       });
 

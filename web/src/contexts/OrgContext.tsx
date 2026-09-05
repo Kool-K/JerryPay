@@ -44,6 +44,8 @@ function writeUserCookie(id: UserId) {
 interface OrgContextValue {
   orgId: OrgId;
   org: OrgInfo;
+  orgs: OrgInfo[];
+  updateOrgName: (id: string, newName: string) => void;
   switchOrg: (id: OrgId) => void;
   userId: UserId;
   user: UserInfo;
@@ -55,10 +57,12 @@ const OrgContext = createContext<OrgContextValue | null>(null);
 export function OrgProvider({
   initialOrgId,
   initialUserId,
+  liveOrgs = [],
   children,
 }: {
   initialOrgId?: OrgId;
   initialUserId?: UserId;
+  liveOrgs?: Array<{ id: string; name: string; slug?: string }>;
   children: ReactNode;
 }) {
   const [orgId, setOrgId] = useState<OrgId>(() => {
@@ -70,6 +74,23 @@ export function OrgProvider({
     if (initialUserId) return initialUserId;
     return readUserCookie();
   });
+
+  const [localLiveOrgs, setLocalLiveOrgs] = useState(liveOrgs);
+
+  // Sync with server-provided liveOrgs when RSC revalidates
+  if (liveOrgs !== localLiveOrgs && JSON.stringify(liveOrgs) !== JSON.stringify(localLiveOrgs)) {
+    setLocalLiveOrgs(liveOrgs);
+  }
+
+  const updateOrgName = useCallback((id: string, newName: string) => {
+    setLocalLiveOrgs((prev) => {
+      const exists = prev.some((o) => o.id === id);
+      if (exists) {
+        return prev.map((o) => (o.id === id ? { ...o, name: newName } : o));
+      }
+      return [...prev, { id, name: newName }];
+    });
+  }, []);
 
   const switchOrg = useCallback((id: OrgId) => {
     writeOrgCookie(id);
@@ -85,11 +106,42 @@ export function OrgProvider({
     window.location.href = "/dashboard";
   }, []);
 
-  const org = ORGS.find((o) => o.id === orgId) ?? ORGS[0];
+  // Merge static baseline with live DB values
+  const orgs: OrgInfo[] = ORGS.map((staticOrg) => {
+    const live = localLiveOrgs.find((lo) => lo.id === staticOrg.id);
+    const name = live?.name || staticOrg.name;
+    const letter = (name.trim()[0] || staticOrg.letter).toUpperCase();
+    return {
+      ...staticOrg,
+      name,
+      letter,
+      slug: live?.slug,
+    };
+  });
+
+  // Include any extra orgs found in DB that aren't in static ORGS
+  for (const lo of localLiveOrgs) {
+    if (!orgs.some((o) => o.id === lo.id)) {
+      orgs.push({
+        id: lo.id,
+        name: lo.name,
+        letter: (lo.name.trim()[0] || "O").toUpperCase(),
+        color: "indigo",
+        slug: lo.slug,
+      });
+    }
+  }
+
+  const org = orgs.find((o) => o.id === orgId) ?? orgs[0] ?? {
+    id: orgId,
+    name: "Workspace",
+    letter: "W",
+    color: "indigo",
+  };
   const user = USERS.find((u) => u.id === userId) ?? USERS[0];
 
   return (
-    <OrgContext.Provider value={{ orgId, org, switchOrg, userId, user, switchUser }}>
+    <OrgContext.Provider value={{ orgId, org, orgs, updateOrgName, switchOrg, userId, user, switchUser }}>
       {children}
     </OrgContext.Provider>
   );

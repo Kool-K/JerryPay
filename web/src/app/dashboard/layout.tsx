@@ -7,7 +7,7 @@ import UserSwitcher from "@/components/UserSwitcher";
 import OrgSwitcher from "@/components/OrgSwitcher";
 import { JerryLogo } from "@/components/JerryLogo";
 import { adminGql } from "@/lib/nhost";
-import { GET_ORG } from "@/lib/queries";
+import { GET_ALL_ORGS } from "@/lib/queries";
 
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 
@@ -25,18 +25,18 @@ export default async function DashboardLayout({ children }: { children: ReactNod
   const initialOrgId = getInitialOrgId(cookieStore);
   const initialUserId = getInitialUserId(cookieStore);
 
-  let liveOrgName: string | undefined;
+  let liveOrgs: Array<{ id: string; name: string; slug: string }> = [];
   try {
-    const orgData = await adminGql<any>(GET_ORG, { id: initialOrgId });
-    if (orgData?.organizations_by_pk?.name) {
-      liveOrgName = orgData.organizations_by_pk.name;
+    const orgsData = await adminGql<{ organizations: Array<{ id: string; name: string; slug: string }> }>(GET_ALL_ORGS);
+    if (orgsData?.organizations) {
+      liveOrgs = orgsData.organizations;
     }
   } catch (e) {
-    console.error("Failed to fetch org name for layout", e);
+    console.error("Failed to fetch organizations for layout", e);
   }
 
   return (
-    <OrgProvider initialOrgId={initialOrgId} initialUserId={initialUserId}>
+    <OrgProvider initialOrgId={initialOrgId} initialUserId={initialUserId} liveOrgs={liveOrgs}>
       <div className="flex min-h-screen bg-[#0E0B08]">
         {/* ── Main content ─────────────────────────────────────────────────── */}
         <main className="flex-1 overflow-auto flex flex-col">
@@ -65,7 +65,7 @@ export default async function DashboardLayout({ children }: { children: ReactNod
 
           {/* Fixed OrgSwitcher */}
           <div className="fixed bottom-3 left-3 sm:bottom-5 sm:left-5 z-50 bg-[#1C1510] border border-[#3A2E24] rounded-xl shadow-xl w-64">
-            <OrgSwitcher liveOrgName={liveOrgName} />
+            <OrgSwitcher />
           </div>
         </main>
       </div>

@@ -5,29 +5,24 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import clsx from "clsx";
 
-import { Brain, Globe, GitBranch, ShieldCheck, Database, Bell, Check, Loader2, ChevronUp, ChevronDown, X, AlertTriangle, MessageSquare, Code } from "lucide-react";
-
-const DEMO_ORG_ID = "aaaaaaaa-0000-0000-0000-000000000001";
+import { Brain, Globe, GitBranch, ShieldCheck, Database, Bell, Check, Loader2, ChevronUp, ChevronDown, X, AlertTriangle, MessageSquare, Code, ShoppingCart, ShieldAlert, CreditCard, LifeBuoy, Zap } from "lucide-react";
+import { useOrg } from "@/contexts/OrgContext";
 
 const STEP_TYPES = [
-  { value: "llm_call", label: "LLM Call", desc: "Call an AI model with a prompt", icon: <Brain className="w-4 h-4 shrink-0" /> },
-  { value: "http_request", label: "HTTP Request", desc: "Make an outbound HTTP call", icon: <Globe className="w-4 h-4 shrink-0" /> },
-  { value: "conditional_branch", label: "Conditional Branch", desc: "Branch based on a condition", icon: <GitBranch className="w-4 h-4 shrink-0" /> },
-  { value: "approval_gate", label: "Approval Gate", desc: "Pause for human approval", icon: <ShieldCheck className="w-4 h-4 shrink-0" /> },
-  { value: "db_write", label: "DB Write", desc: "Write results to the database", icon: <Database className="w-4 h-4 shrink-0" /> },
-  { value: "notify", label: "Notify", desc: "Send a notification", icon: <Bell className="w-4 h-4 shrink-0" /> },
-  {
-    value: "whatsapp_msg",
-    label: "WhatsApp Message",
-    desc: "Send a message via WhatsApp API",
-    icon: <MessageSquare className="w-4 h-4 shrink-0" />
-  },
-  {
-    value: "code_transform",
-    label: "Data Transformer",
-    desc: "Format or calculate data using JavaScript",
-    icon: <Code className="w-4 h-4 shrink-0" />
-  },
+  // Core step types
+  { value: "llm_call",           label: "LLM Call",           desc: "Call an AI model with a prompt",          icon: <Brain         className="w-4 h-4 shrink-0" />, group: "core" },
+  { value: "http_request",       label: "HTTP Request",       desc: "Make an outbound HTTP call",               icon: <Globe         className="w-4 h-4 shrink-0" />, group: "core" },
+  { value: "conditional_branch", label: "Conditional Branch", desc: "Branch based on a condition",              icon: <GitBranch     className="w-4 h-4 shrink-0" />, group: "core" },
+  { value: "approval_gate",      label: "Approval Gate",      desc: "Pause for human approval",                  icon: <ShieldCheck   className="w-4 h-4 shrink-0" />, group: "core" },
+  { value: "db_write",           label: "DB Write",           desc: "Write results to the database",            icon: <Database      className="w-4 h-4 shrink-0" />, group: "core" },
+  { value: "notify",             label: "Notify",             desc: "Send a notification",                      icon: <Bell          className="w-4 h-4 shrink-0" />, group: "core" },
+  { value: "whatsapp_msg",       label: "WhatsApp Message",   desc: "Send a message via WhatsApp API",          icon: <MessageSquare className="w-4 h-4 shrink-0" />, group: "core" },
+  { value: "code_transform",     label: "Data Transformer",   desc: "Format or calculate data using JavaScript", icon: <Code          className="w-4 h-4 shrink-0" />, group: "core" },
+  // JerryPay agentic commerce step types
+  { value: "AI_AGENT_RECOMMENDER",  label: "AI Recommender",        desc: "AI evaluates buyer request & builds bundle", icon: <ShoppingCart className="w-4 h-4 shrink-0" />, group: "commerce" },
+  { value: "POLICY_GATE",           label: "Policy Gate",           desc: "Deterministic discount & total cap check",   icon: <ShieldAlert  className="w-4 h-4 shrink-0" />, group: "commerce" },
+  { value: "RAZORPAY_ORDER_CREATE", label: "Razorpay Order",        desc: "Create a Razorpay test-mode order",          icon: <CreditCard   className="w-4 h-4 shrink-0" />, group: "commerce" },
+  { value: "RECOVERY_HANDLER",      label: "Recovery Fallback",     desc: "Handle payment errors & notify ops",        icon: <LifeBuoy     className="w-4 h-4 shrink-0" />, group: "commerce" },
 ];
 
 type StepDraft = {
@@ -77,11 +72,32 @@ const DEFAULT_CONFIGS: Record<string, Record<string, unknown>> = {
   code_transform: {
     code: "return { transformed: input.text ? input.text.trim() : '' };",
   },
-
+  // JerryPay agentic commerce
+  AI_AGENT_RECOMMENDER: {
+    max_discount_pct: 15,
+    currency: "INR",
+    system_prompt:
+      "You are JerryPay's Agentic Commerce AI. Analyse the buyer's request and recommend the optimal product bundle.\n\nRULES:\n- Calculate a fair price. Maximum discount allowed: 15%.\n- Currency: INR.\n- Return ONLY valid JSON:\n  {\"bundle\":[{\"product_id\":\"...\",\"name\":\"...\",\"price_inr\":0,\"qty\":1}],\"recommended_price_inr\":0,\"discount_pct\":0,\"reasoning\":\"...\"}",
+  },
+  POLICY_GATE: {
+    max_discount_pct: 15,
+    max_total_inr: 5000,
+    blocked_risk_tags: ["fraud", "high_risk", "restricted"],
+  },
+  RAZORPAY_ORDER_CREATE: {
+    currency: "INR",
+    receipt_prefix: "JPAY",
+  },
+  RECOVERY_HANDLER: {
+    notify_channel: "slack",
+    fallback_message_template:
+      "JerryPay Alert: Order ₹{{input.recommended_price_inr}} failed checkout. Escalated to ops.",
+  },
 };
 
 export default function NewWorkflowPage() {
   const router = useRouter();
+  const { orgId, org } = useOrg();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [steps, setSteps] = useState<StepDraft[]>([]);
@@ -157,7 +173,7 @@ export default function NewWorkflowPage() {
         body: JSON.stringify({
           query: mutation,
           variables: {
-            orgId: DEMO_ORG_ID,
+            orgId,
             name: name.trim(),
             description: description.trim() || null,
             steps: stepInserts,
@@ -193,7 +209,7 @@ export default function NewWorkflowPage() {
         </div>
         <h1 className="text-2xl font-bold text-white">New Workflow</h1>
         <p className="text-sm text-gray-400 mt-1">
-          Build an AI agent workflow for Org A — Acme Corp
+          Build an AI agent workflow for {org.name}
         </p>
       </div>
 
@@ -271,14 +287,35 @@ export default function NewWorkflowPage() {
 
           {/* Add step buttons */}
           <div>
-            <p className="text-xs text-[#A89584] mb-2 font-medium">Add Step</p>
-            <div className="grid grid-cols-2 gap-2">
-              {STEP_TYPES.map((s) => (
+            {/* Core steps */}
+            <p className="text-xs text-[#A89584] mb-2 font-medium">Core Steps</p>
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              {STEP_TYPES.filter(s => s.group === "core").map((s) => (
                 <button
                   key={s.value}
                   type="button"
                   onClick={() => addStep(s.value)}
                   className="flex items-start gap-2 p-2.5 rounded-lg bg-[#1C1510] border border-[#3A2E24] hover:border-[#CD8309]/40 hover:bg-[#2A1F18]/60 transition-all text-left"
+                >
+                  <span className="text-[#CD8309] mt-0.5 shrink-0">{s.icon}</span>
+                  <div>
+                    <p className="text-xs font-medium text-[#FFE5C0]">{s.label}</p>
+                    <p className="text-[10px] text-[#A89584]">{s.desc}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+            {/* JerryPay commerce steps */}
+            <p className="text-xs text-[#CD8309] mb-2 font-medium flex items-center gap-1">
+              <Zap className="w-3 h-3" /> JerryPay Agentic Commerce
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              {STEP_TYPES.filter(s => s.group === "commerce").map((s) => (
+                <button
+                  key={s.value}
+                  type="button"
+                  onClick={() => addStep(s.value)}
+                  className="flex items-start gap-2 p-2.5 rounded-lg bg-[#CD8309]/5 border border-[#CD8309]/20 hover:border-[#CD8309]/50 hover:bg-[#CD8309]/10 transition-all text-left"
                 >
                   <span className="text-[#CD8309] mt-0.5 shrink-0">{s.icon}</span>
                   <div>

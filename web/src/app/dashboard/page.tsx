@@ -68,8 +68,31 @@ export default async function DashboardPage() {
   const workflows = workflowsData.workflows ?? [];
   const org = orgData.organizations_by_pk;
   const usagePercent = org
-    ? Math.round((org.usage_count / org.usage_allowed) * 100)
+    ? Math.min(100, Math.round((org.usage_count / org.usage_allowed) * 100))
     : 0;
+
+  /**
+   * nextResetDate — rolls `billing_cycle_start` forward by 1 calendar month
+   * until the result is strictly in the future. This ensures the displayed date
+   * is always the *next* upcoming renewal, even if the seed value is in the past.
+   */
+  function nextResetDate(cycleStart: string): string {
+    const start = new Date(cycleStart);
+    const now = new Date();
+    // Advance by 1 month increments until we are past today
+    const next = new Date(start);
+    while (next <= now) {
+      next.setMonth(next.getMonth() + 1);
+    }
+    return next.toLocaleDateString("en-IN", {
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+    });
+  }
+
+  const resetLabel = org ? nextResetDate(org.billing_cycle_start) : "—";
+  const isAtQuota = org ? org.usage_count >= org.usage_allowed : false;
 
   return (
     <div className="fade-in">
@@ -81,10 +104,15 @@ export default async function DashboardPage() {
             {org?.name ?? "Loading…"} ·{" "}
             <span className={clsx(
               "font-medium",
-              usagePercent > 80 ? "text-red-400" : "text-[#FFE5C0]"
+              isAtQuota ? "text-red-400" : usagePercent > 80 ? "text-amber-400" : "text-[#FFE5C0]"
             )}>
               {org?.usage_count ?? 0}/{org?.usage_allowed ?? 0} runs used
             </span>
+            {isAtQuota && (
+              <span className="ml-2 text-xs bg-red-500/20 text-red-300 border border-red-500/30 px-1.5 py-0.5 rounded-full font-semibold">
+                Quota exceeded
+              </span>
+            )}
           </p>
         </div>
         <Link href="/dashboard/workflows/new" className="btn-primary">
@@ -94,29 +122,44 @@ export default async function DashboardPage() {
 
       {/* ── Usage bar ──────────────────────────────────────────────────────── */}
       {org && (
-        <div className="card p-4 mb-6 flex items-center gap-4">
-          <div className="flex-1">
-            <div className="flex justify-between mb-1">
-              <span className="text-xs text-[#A89584] font-medium">Monthly Usage</span>
-              <span className="text-xs text-[#FFE5C0] font-semibold">{usagePercent}%</span>
+        <div className="card p-4 mb-6">
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <div className="flex justify-between mb-1.5">
+                <span className="text-xs text-[#A89584] font-medium">Monthly Usage</span>
+                <span className={clsx(
+                  "text-xs font-semibold",
+                  isAtQuota ? "text-red-400" : usagePercent > 80 ? "text-amber-400" : "text-[#FFE5C0]"
+                )}>
+                  {org.usage_count} / {org.usage_allowed} runs · {usagePercent}%
+                </span>
+              </div>
+              <div className="h-2.5 bg-[#2A1F18] rounded-full overflow-hidden">
+                <div
+                  className={clsx(
+                    "h-full rounded-full transition-all duration-500",
+                    isAtQuota
+                      ? "bg-red-500"
+                      : usagePercent > 80
+                      ? "bg-amber-500"
+                      : usagePercent > 60
+                      ? "bg-[#CD8309]"
+                      : "bg-emerald-500"
+                  )}
+                  style={{ width: `${usagePercent}%` }}
+                />
+              </div>
             </div>
-            <div className="h-2 bg-[#2A1F18] rounded-full overflow-hidden">
-              <div
-                className={clsx(
-                  "h-full rounded-full transition-all",
-                  usagePercent > 80
-                    ? "bg-red-500"
-                    : usagePercent > 60
-                    ? "bg-[#CD8309]"
-                    : "bg-[#CD8309]"
-                )}
-                style={{ width: `${usagePercent}%` }}
-              />
+            <div className="text-right text-xs text-[#A89584] shrink-0 min-w-[90px]">
+              <span className="block text-[10px] text-[#6B5C4E] uppercase tracking-wider mb-0.5">Resets</span>
+              <span className="font-medium text-[#FFE5C0]">{resetLabel}</span>
             </div>
           </div>
-          <div className="text-right text-xs text-[#A89584] shrink-0">
-            Resets {new Date(org.billing_cycle_start).toLocaleDateString()}
-          </div>
+          {isAtQuota && (
+            <p className="mt-2 text-xs text-red-300 bg-red-500/10 border border-red-500/20 rounded-md px-3 py-2">
+              ⚠️ Monthly quota reached. New workflow runs will be blocked until the next billing cycle ({resetLabel}).
+            </p>
+          )}
         </div>
       )}
 
