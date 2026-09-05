@@ -1,5 +1,7 @@
 # JerryPay — Agentic Commerce Gateway
 
+**🌟 Live Demo: [https://jerrypay.vercel.app/dashboard](https://jerrypay.vercel.app/dashboard)**
+
 > **Razorpay AI Buildathon · Track 01: AI Growth & Agentic Commerce**
 
 JerryPay is an **Agentic Commerce Gateway** that lets AI agents autonomously initiate, evaluate, policy-gate, and reconcile payments through Razorpay — with deterministic guardrails, explainable decision traces, and human-in-the-loop approval for high-risk transactions.
