@@ -1,7 +1,7 @@
 # JerryPay — Agentic Commerce Gateway
 
 **🌟 Live Demo: [https://jerrypay.vercel.app/dashboard](https://jerrypay.vercel.app/dashboard)**  
-**📹 Video Walkthrough (Loom): [Watch Demo (2 min)](https://www.loom.com/share/8f363fa027c942659819a0a1e7c7478a)**
+**📹 Video Walkthrough (Loom): [Watch Demo](https://www.loom.com/share/8f363fa027c942659819a0a1e7c7478a)**
 
 > **Razorpay AI Buildathon · Track 01: AI Growth & Agentic Commerce**
 
